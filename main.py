@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel
 import sqlite3
 from typing import List, Dict
@@ -363,7 +363,7 @@ def add_sale(sale: Sale):
         return {"id": cursor.lastrowid, **sale.dict()}
 
 @app.get("/calendar/")
-def get_calendar_data(month_year: str = None):
+async def get_calendar_data(month_year: str = Query(None, description="Use 'current' for the current month/year or specify a month and year (e.g., 'MARCH 2025')")):
     today = datetime.now()
     current_month_year = today.strftime("%B %Y").upper()
     if month_year and month_year.lower() == "current":
@@ -380,8 +380,9 @@ def get_calendar_data(month_year: str = None):
             jobs_left = 0
         else:
             cursor = conn.execute("SELECT COUNT(*) FROM jobs WHERE strftime('%Y-%m', start_time) = ? AND status != 'COMPLETED'", (today.strftime("%Y-%m"),))
-            jobs_left = cursor.fetchone()[0] if cursor.fetchone() else 0
-        days_left = (datetime(year, today.month + 1, 1) - today).days if today.month < 12 else (datetime(year + 1, 1, 1) - today).days
+            result = cursor.fetchone()
+            jobs_left = result[0] if result else 0
+        days_left = max(0, (datetime(year, today.month + 1, 1) - today).days if today.month < 12 else (datetime(year + 1, 1, 1) - today).days)
         rain_days = 2  # Placeholder for OpenWeatherMap
         return {"month_year": month_year, "jobs_left": jobs_left, "days_left": days_left, "rain_days": rain_days}
 
