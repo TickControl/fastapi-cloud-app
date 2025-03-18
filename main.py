@@ -1,247 +1,157 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import List, Optional
 import sqlite3
 from datetime import datetime
-from contextlib import contextmanager
-import logging
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins; adjust for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Database context manager
-@contextmanager
+# Database connection
 def get_db():
-    try:
-        conn = sqlite3.connect('tickcontrol.db')
-        conn.row_factory = sqlite3.Row
-        yield conn
-    except Exception as e:
-        logger.error(f"Database connection error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
-    finally:
-        conn.close()
+    conn = sqlite3.connect('tick_control.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
 # Pydantic models
 class Operator(BaseModel):
     id: int
     name: str
-    clock_in: str | None
-    clock_out: str | None
+    clock_in: Optional[str]
+    clock_out: Optional[str]
 
-class Login(BaseModel):
+class LoginRequest(BaseModel):
     username: str
     password: str
 
 class Job(BaseModel):
     id: int
     customer_name: str
-    phone: str | None
     address: str
-    notes: str | None
+    phone: Optional[str]
+    notes: Optional[str]
     status: str
 
 class Truck(BaseModel):
     id: int
     name: str
 
-class Maintenance(BaseModel):
-    truck_id: int
-    maintenance_type: str
-    mileage: str
-    performer: str
+class Calendar(BaseModel):
+    month_year: str
+    jobs_left: int
+
+# Database initialization
+with get_db() as conn:
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS operators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            clock_in TEXT,
+            clock_out TEXT
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_name TEXT NOT NULL,
+            address TEXT NOT NULL,
+            phone TEXT,
+            notes TEXT,
+            status TEXT NOT NULL
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS trucks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS truck_maintenance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            truck_id INTEGER,
+            maintenance_type TEXT NOT NULL,
+            mileage TEXT,
+            performer TEXT,
+            FOREIGN KEY (truck_id) REFERENCES trucks(id)
+        )
+    ''')
+
+    # Insert sample data if not exists
+    conn.execute("INSERT OR IGNORE INTO operators (id, name) VALUES (1, 'Jacob')")
+    conn.execute("INSERT OR IGNORE INTO jobs (id, customer_name, address, phone, notes, status) VALUES (1, 'John Doe', '123 Main St', '555-1234', 'Spray backyard', 'PENDING')")
+    conn.execute("INSERT OR IGNORE INTO trucks (id, name) VALUES (1, 'Tick 1')")
+    conn.execute("INSERT OR IGNORE INTO trucks (id, name) VALUES (2, 'Tick 2')")
+    conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('call_number', '555-123-4567')")
 
 # Endpoints
-@app.get("/operators/", response_model=list[Operator])
+@app.get("/operators/", response_model=List[Operator])
 def list_operators():
-    try:
-        with get_db() as conn:
-            cursor = conn.execute("SELECT id, name, clock_in, clock_out FROM operators")
-            return [dict(row) for row in cursor.fetchall()]
-    except Exception as e:
-        logger.error(f"Error in list_operators: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error fetching operators: {str(e)}")
+    with get_db() as conn:
+        cursor = conn.execute("SELECT id, name, clock_in, clock_out FROM operators")
+        return [dict(row) for row in cursor.fetchall()]
 
 @app.post("/login/")
-def login(login: Login):
-    try:
-        logger.info(f"Login attempt for username: {login.username}")
+def login(request: LoginRequest):
+    if request.username == "Jacob" and request.password == "password123":
         with get_db() as conn:
-            cursor = conn.execute("SELECT id, name FROM operators WHERE name = ? AND password = ?", (login.username, login.password))
-            operator = cursor.fetchone()
-            if operator:
-                logger.info(f"Operator found: {operator['name']}")
-                conn.execute("UPDATE operators SET clock_in = ? WHERE id = ?", (datetime.now().isoformat(), operator['id']))
-                conn.commit()
-                return {"message": "Login successful", "clock_in": datetime.now().isoformat()}
-            logger.warning(f"Invalid credentials for username: {login.username}")
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-    except Exception as e:
-        logger.error(f"Error in login: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
-
-@app.put("/operators/")
-def clock_out(operator_data: dict):
-    try:
-        with get_db() as conn:
-            if "clock_out" in operator_data:
-                conn.execute("UPDATE operators SET clock_out = ? WHERE name = (SELECT name FROM operators WHERE clock_in IS NOT NULL AND clock_out IS NULL LIMIT 1)", (operator_data["clock_out"],))
-                conn.commit()
-            return {"message": "Clock out updated"}
-    except Exception as e:
-        logger.error(f"Error in clock_out: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating clock out: {str(e)}")
-
-@app.post("/end_of_day/")
-def end_of_day(operator_id: int):
-    try:
-        with get_db() as conn:
-            conn.execute("UPDATE operators SET clock_out = ? WHERE id = ?", (datetime.now().isoformat(), operator_id))
+            conn.execute("UPDATE operators SET clock_in = ? WHERE name = ?", (datetime.now().isoformat(), request.username))
             conn.commit()
-            return {"message": "End of day processed"}
-    except Exception as e:
-        logger.error(f"Error in end_of_day: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing end of day: {str(e)}")
+        return {"message": "Login successful", "clock_in": datetime.now().isoformat()}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
 
-@app.get("/trucks/", response_model=list[Truck])
-def list_trucks():
-    try:
-        with get_db() as conn:
-            cursor = conn.execute("SELECT id, name FROM trucks")
-            return [dict(row) for row in cursor.fetchall()]
-    except Exception as e:
-        logger.error(f"Error in list_trucks: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error fetching trucks: {str(e)}")
-
-@app.get("/jobs/", response_model=list[Job])
+@app.get("/jobs/", response_model=List[Job])
 def list_jobs():
-    try:
-        with get_db() as conn:
-            cursor = conn.execute("SELECT id, customer_name, phone, address, notes, status FROM jobs")
-            return [dict(row) for row in cursor.fetchall()]
-    except Exception as e:
-        logger.error(f"Error in list_jobs: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error fetching jobs: {str(e)}")
+    with get_db() as conn:
+        cursor = conn.execute("SELECT id, customer_name, address, phone, notes, status FROM jobs")
+        return [dict(row) for row in cursor.fetchall()]
 
 @app.put("/jobs/{job_id}/status")
-def update_job_status(job_id: int, status_data: dict):
-    try:
-        with get_db() as conn:
-            if "status" in status_data:
-                conn.execute("UPDATE jobs SET status = ? WHERE id = ?", (status_data["status"], job_id))
-                conn.commit()
-            return {"message": "Job status updated"}
-    except Exception as e:
-        logger.error(f"Error in update_job_status: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating job status: {str(e)}")
+def update_job_status(job_id: int, status: str, photo_url: Optional[str] = None):
+    with get_db() as conn:
+        conn.execute("UPDATE jobs SET status = ?, photo_url = ? WHERE id = ?", (status, photo_url, job_id))
+        conn.commit()
+    return {"message": "Job status updated"}
+
+@app.get("/trucks/", response_model=List[Truck])
+def list_trucks():
+    with get_db() as conn:
+        cursor = conn.execute("SELECT id, name FROM trucks")
+        return [dict(row) for row in cursor.fetchall()]
 
 @app.get("/calendar/")
 def get_calendar(month_year: str):
-    try:
-        with get_db() as conn:
-            cursor = conn.execute("SELECT COUNT(*) as jobs_left FROM jobs WHERE status != 'COMPLETED'")
-            jobs_left = cursor.fetchone()[0]
-            return {"month_year": month_year, "jobs_left": jobs_left}
-    except Exception as e:
-        logger.error(f"Error in get_calendar: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error fetching calendar: {str(e)}")
-
-@app.post("/truck_maintenance/")
-def add_maintenance(maintenance: Maintenance):
-    try:
-        with get_db() as conn:
-            conn.execute("INSERT INTO truck_maintenance (truck_id, maintenance_type, mileage, performer) VALUES (?, ?, ?, ?)",
-                         (maintenance.truck_id, maintenance.maintenance_type, maintenance.mileage, maintenance.performer))
-            conn.commit()
-            return {"message": "Maintenance record added"}
-    except Exception as e:
-        logger.error(f"Error in add_maintenance: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error adding maintenance record: {str(e)}")
+    # Placeholder logic for calendar
+    return {"month_year": month_year, "jobs_left": 10}
 
 @app.get("/settings/call_number")
 def get_call_number():
-    try:
-        with get_db() as conn:
-            cursor = conn.execute("SELECT value FROM settings WHERE key = 'call_number'")
-            result = cursor.fetchone()
-            return {"call_number": result[0] if result else "555-123-4567"}
-    except Exception as e:
-        logger.error(f"Error in get_call_number: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error fetching call number: {str(e)}")
+    with get_db() as conn:
+        cursor = conn.execute("SELECT value FROM settings WHERE key = 'call_number'")
+        row = cursor.fetchone()
+        return {"call_number": row['value'] if row else "555-123-4567"}
 
-# Initialize database (run once or on startup if needed)
-def init_db():
-    try:
-        with get_db() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS operators (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    clock_in TEXT,
-                    clock_out TEXT,
-                    password TEXT
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS trucks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS jobs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    customer_name TEXT NOT NULL,
-                    phone TEXT,
-                    address TEXT NOT NULL,
-                    notes TEXT,
-                    status TEXT NOT NULL
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS truck_maintenance (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    truck_id INTEGER,
-                    maintenance_type TEXT NOT NULL,
-                    mileage TEXT NOT NULL,
-                    performer TEXT NOT NULL,
-                    FOREIGN KEY (truck_id) REFERENCES trucks(id)
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-            """)
-            # Insert sample data if not exists
-            conn.execute("INSERT OR IGNORE INTO operators (name, password) VALUES (?, ?)", ("Jacob", "password123"))
-            conn.execute("INSERT OR IGNORE INTO trucks (name) VALUES (?)", ("Truck 1",))
-            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("call_number", "555-123-4567"))
-            conn.commit()
-            logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Error initializing database: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error initializing database: {str(e)}")
+@app.put("/operators/")
+def update_operator(clock_out: str):
+    with get_db() as conn:
+        conn.execute("UPDATE operators SET clock_out = ? WHERE clock_out IS NULL", (clock_out,))
+        conn.commit()
+    return {"message": "Operator updated"}
 
-# Run database initialization on startup
-@app.on_event("startup")
-async def startup_event():
-    init_db()
+@app.post("/end_of_day/")
+def end_of_day(operator_id: int):
+    # Placeholder logic for end of day
+    return {"message": "End of day processed"}
 
-if __name__ == "__main__":
-    init_db()
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.post("/truck_maintenance/")
+def add_truck_maintenance(truck_id: int, maintenance_type: str, mileage: str, performer: str):
+    with get_db() as conn:
+        conn.execute("INSERT INTO truck_maintenance (truck_id, maintenance_type, mileage, performer) VALUES (?, ?, ?, ?)", 
+                     (truck_id, maintenance_type, mileage, performer))
+        conn.commit()
+    return {"message": "Truck maintenance added"}
