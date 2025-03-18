@@ -30,6 +30,7 @@ class Job(BaseModel):
     phone: Optional[str]
     notes: Optional[str]
     status: str
+    date: str  # Add date field to Job model
 
 class Truck(BaseModel):
     id: int
@@ -38,6 +39,10 @@ class Truck(BaseModel):
 class Calendar(BaseModel):
     month_year: str
     jobs_left: int
+
+class JobListResponse(BaseModel):
+    date: str
+    jobs: List[Job]
 
 # Database initialization
 with get_db() as conn:
@@ -56,7 +61,8 @@ with get_db() as conn:
             address TEXT NOT NULL,
             phone TEXT,
             notes TEXT,
-            status TEXT NOT NULL
+            status TEXT NOT NULL,
+            date TEXT NOT NULL  -- Add date column
         )
     ''')
     conn.execute('''
@@ -82,9 +88,10 @@ with get_db() as conn:
         )
     ''')
 
-    # Insert sample data if not exists
+    # Insert sample data with dates
     conn.execute("INSERT OR IGNORE INTO operators (id, name) VALUES (1, 'Jacob')")
-    conn.execute("INSERT OR IGNORE INTO jobs (id, customer_name, address, phone, notes, status) VALUES (1, 'John Doe', '123 Main St', '555-1234', 'Spray backyard', 'PENDING')")
+    conn.execute("INSERT OR IGNORE INTO jobs (id, customer_name, address, phone, notes, status, date) VALUES (1, 'John Doe', '123 Main St', '555-1234', 'Spray backyard', 'PENDING', '2025-03-18')")
+    conn.execute("INSERT OR IGNORE INTO jobs (id, customer_name, address, phone, notes, status, date) VALUES (2, 'Jane Smith', '456 Oak St', '555-5678', 'Check fence', 'PENDING', '2025-03-19')")
     conn.execute("INSERT OR IGNORE INTO trucks (id, name) VALUES (1, 'Tick 1')")
     conn.execute("INSERT OR IGNORE INTO trucks (id, name) VALUES (2, 'Tick 2')")
     conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('call_number', '555-123-4567')")
@@ -108,7 +115,7 @@ def login(request: LoginRequest):
 @app.get("/jobs/", response_model=List[Job])
 def list_jobs():
     with get_db() as conn:
-        cursor = conn.execute("SELECT id, customer_name, address, phone, notes, status FROM jobs")
+        cursor = conn.execute("SELECT id, customer_name, address, phone, notes, status, date FROM jobs")
         return [dict(row) for row in cursor.fetchall()]
 
 @app.put("/jobs/{job_id}/status")
@@ -128,6 +135,13 @@ def list_trucks():
 def get_calendar(month_year: str):
     # Placeholder logic for calendar
     return {"month_year": month_year, "jobs_left": 10}
+
+@app.get("/jobs/date/{date}", response_model=JobListResponse)
+def get_jobs_by_date(date: str):
+    with get_db() as conn:
+        cursor = conn.execute("SELECT id, customer_name, address, phone, notes, status, date FROM jobs WHERE date = ?", (date,))
+        jobs = [dict(row) for row in cursor.fetchall()]
+        return {"date": date, "jobs": jobs}
 
 @app.get("/settings/call_number")
 def get_call_number():
