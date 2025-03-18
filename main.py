@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 import sqlite3
 from typing import List, Dict
@@ -374,7 +374,7 @@ def get_calendar_data(month_year: str):
     march_start = datetime(year, 3, 1)
 
     with get_db() as conn:
-        if today >= reset_date and today < march_start and year > datetime.now().year:
+        if today >= reset_date and today < march_start and year >= datetime.now().year:
             jobs_left = 0
         else:
             cursor = conn.execute("SELECT COUNT(*) FROM jobs WHERE strftime('%Y-%m', start_time) = ? AND status != 'COMPLETED'", (today.strftime("%Y-%m"),))
@@ -404,18 +404,18 @@ def get_rescheduling_rules():
 def end_of_day(operator_id: int):
     with get_db() as conn:
         cursor = conn.execute("SELECT value FROM settings WHERE key = 'rescheduling_rules'")
-        rules = cursor.fetchone()[0] if cursor.fetchone() else "[]"
-        if not rules or rules == "[]":
+        rules = cursor.fetchone()
+        rules_json = rules[0] if rules else "[]"
+        if not rules_json or rules_json == "[]":
             return {"message": "Rescheduling rules not set in Main Software settings. Please configure rules."}
-        # Placeholder: Parse rules and apply logic (to be implemented in Main Software)
+        # Placeholder: Parse rules (to be implemented in Main Software)
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cursor = conn.execute("SELECT * FROM jobs WHERE operator_id = ? AND status != 'COMPLETED'", (operator_id,))
         incomplete_jobs = [dict(row) for row in cursor.fetchall()]
         for job in incomplete_jobs:
-            new_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")  # Default to next day until rules are set
+            new_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")  # Default until rules are set
             conn.execute("UPDATE jobs SET status = 'NOT COMPLETED', stop_time = ?, upload_time = ?, notes = ? WHERE id = ?", 
                          (current_time, current_time, f"Moved to {new_date}", job["id"]))
-            # Reschedule job (placeholder until rules are defined)
             conn.execute("INSERT INTO jobs (operator_id, customer_id, address, status, start_time) VALUES (?, ?, ?, ?, ?)",
                          (job["operator_id"], job["customer_id"], job["address"], "GO", new_date))
         conn.commit()
