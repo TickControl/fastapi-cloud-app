@@ -23,6 +23,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add root endpoint
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to Tick Control, LLC API"}
+
 # Encryption setup for credit cards
 key = Fernet.generate_key()
 cipher = Fernet(key)
