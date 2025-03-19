@@ -1,6 +1,4 @@
 fastapi
 uvicorn
 pydantic
-fastapi-security
-requests
-python-multipart
+cryptography
