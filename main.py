@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import logging
 from cryptography.fernet import Fernet
 import base64
+import os  # Added for environment variable
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -651,6 +652,7 @@ async def startup_event():
     init_db()
 
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))  # Use PORT env var, default to 8000
     init_db()
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=port)
