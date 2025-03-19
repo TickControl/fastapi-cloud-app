@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime
 from contextlib import contextmanager
 import logging
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -15,7 +16,7 @@ app = FastAPI()
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins; adjust for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,6 +63,15 @@ class Maintenance(BaseModel):
     maintenance_type: str
     mileage: str
     performer: str
+
+class Customer(BaseModel):
+    id: int | None
+    name: str
+    phone: str | None
+    address: str
+    email: str | None
+    service_frequency: str | None
+    notes: str | None
 
 # Endpoints
 @app.get("/operators/", response_model=list[Operator])
@@ -181,9 +191,69 @@ def get_call_number():
         logger.error(f"Error in get_call_number: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching call number: {str(e)}")
 
+# Customer Endpoints
+@app.get("/customers/", response_model=list[Customer])
+def list_customers():
+    try:
+        with get_db() as conn:
+            cursor = conn.execute("SELECT id, name, phone, address, email, service_frequency, notes FROM customers")
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error in list_customers: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching customers: {str(e)}")
+
+@app.get("/customers/{customer_id}", response_model=Customer)
+def get_customer(customer_id: int):
+    try:
+        with get_db() as conn:
+            cursor = conn.execute("SELECT id, name, phone, address, email, service_frequency, notes FROM customers WHERE id = ?", (customer_id,))
+            customer = cursor.fetchone()
+            if customer:
+                return dict(customer)
+            raise HTTPException(status_code=404, detail="Customer not found")
+    except Exception as e:
+        logger.error(f"Error in get_customer: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching customer: {str(e)}")
+
+@app.post("/customers/", response_model=Customer)
+def create_customer(customer: Customer):
+    try:
+        with get_db() as conn:
+            cursor = conn.execute(
+                "INSERT INTO customers (name, phone, address, email, service_frequency, notes) VALUES (?, ?, ?, ?, ?, ?)",
+                (customer.name, customer.phone, customer.address, customer.email, customer.service_frequency, customer.notes)
+            )
+            conn.commit()
+            customer_id = cursor.lastrowid
+            return {**customer.dict(), "id": customer_id}
+    except Exception as e:
+        logger.error(f"Error in create_customer: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating customer: {str(e)}")
+
+@app.put("/customers/{customer_id}", response_model=Customer)
+def update_customer(customer_id: int, customer: Customer):
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE customers SET name = ?, phone = ?, address = ?, email = ?, service_frequency = ?, notes = ? WHERE id = ?",
+                (customer.name, customer.phone, customer.address, customer.email, customer.service_frequency, customer.notes, customer_id)
+            )
+            conn.commit()
+            return {**customer.dict(), "id": customer_id}
+    except Exception as e:
+        logger.error(f"Error in update_customer: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating customer: {str(e)}")
+
 # Initialize database (run once or on startup if needed)
 def init_db():
     try:
+        # Log database file status
+        db_file = 'tickcontrol.db'
+        if os.path.exists(db_file):
+            logger.info(f"Database file {db_file} exists")
+        else:
+            logger.info(f"Database file {db_file} does not exist, creating it")
+
         with get_db() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS operators (
@@ -226,10 +296,24 @@ def init_db():
                     value TEXT NOT NULL
                 )
             """)
+            # Add customers table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS customers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    phone TEXT,
+                    address TEXT NOT NULL,
+                    email TEXT,
+                    service_frequency TEXT,
+                    notes TEXT
+                )
+            """)
             # Insert sample data if not exists
             conn.execute("INSERT OR IGNORE INTO operators (name, password) VALUES (?, ?)", ("Jacob", "password123"))
             conn.execute("INSERT OR IGNORE INTO trucks (name) VALUES (?)", ("Truck 1",))
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", ("call_number", "555-123-4567"))
+            conn.execute("INSERT OR IGNORE INTO customers (name, phone, address, email, service_frequency, notes) VALUES (?, ?, ?, ?, ?, ?)",
+                         ("John Doe", "555-987-6543", "123 Tick St", "john@example.com", "30 days", "Prefers morning service"))
             conn.commit()
             logger.info("Database initialized successfully")
     except Exception as e:
